@@ -43,11 +43,15 @@ private bit_width(n: usize) -> usize = usize(n.trailing_zeros())
 // The low `bits` bits, in the opposite order, which is where the bit-reversal permutation sends each
 // index.
 //
-// This stays a loop rather than becoming `v.reverse_bits() >> (w - bits)`, and the reason is the
-// **empty shift**: a one-sample transform reaches here with `bits` at zero, since `bit_width(1)` is
-// `trailing_zeros(1)`, which is zero. That shift is by the full width, which is undefined. The loop
-// is total where the shift needs a guard in front of it, and at these sizes the guard is the only
-// thing the shift would have bought.
+// This stays a loop rather than becoming `v.reverse_bits() >> (w - bits)`, and the reason is this
+// package's declared floor rather than the language. A one-sample transform reaches here with `bits`
+// at zero, since `bit_width(1)` is `trailing_zeros(1)`, which is zero, so that shift is by the full
+// width. It used to be undefined; it is defined now and answers zero, so the one-liner would be
+// total with no guard in front of it.
+//
+// What keeps the loop is that `package.hocon` declares `sysl = "0.0.79"`, which is older than the
+// rule. Adopting the shift would raise the floor for a saving of `bit_width(n)` iterations once per
+// transform — a bad trade, so the loop is the correct code here rather than a workaround.
 private reverse_bits(v: usize, bits: usize) -> usize
     var r: usize = 0
     var x = v

@@ -92,23 +92,29 @@ that wanted two operand types became `Mul[Rhs = Self]`, a bound that promises be
 value became receiver-free trait membership, and the complex arithmetic it once carried is now
 `sysl.math.complex`. What was left when the friction ran out was a library, which is this.
 
-One finding is **not** discharged, and probing it found something larger than the finding said.
+One finding turned out to be two, and both are settled now — one was false as recorded, and the
+language has since moved under the other.
 
 The guide recorded it as *"`sysl.math.Bits` cannot say how wide `Self` is"*, which is **false**:
 `count_ones() + count_zeros()` is the width by construction, at whatever `Self` turned out to be, and
 `sysl.math`'s own docstring says that is exactly why it keeps the second of the pair rather than
 leaving it to a subtraction.
 
-What actually stops `reverse_bits` becoming `v.reverse_bits() >> (w - bits)` is the **empty shift**.
-A one-sample transform reaches it with `bits` at zero, so the amount is the full width — and a shift
-at or past the width is **undefined behaviour** in sysl today, on every integer type. It does not
-trap and it does not answer zero; it produces garbage that is not stable across compilations, and has
-been observed to differ between two runs of one binary. The one case that behaves is a **left** shift
-on a `within`-typed operand, which traps as `reference/errors.md` promises.
+What actually stopped `reverse_bits` becoming `v.reverse_bits() >> (w - bits)` was the **empty
+shift**. A one-sample transform reaches it with `bits` at zero, so the amount is the full width — and
+that used to be **undefined behaviour**, on every integer type. It did not trap and it did not answer
+zero; it produced garbage that was not stable across compilations, and was observed to differ between
+two runs of one binary.
 
-So the loop stays, and it is total where the shift is not. It is the one place in this package a
-target with a different `usize` could go wrong — and until the shift question is settled, the loop is
-the correct code rather than a workaround.
+**That is fixed in the language rather than worked around here.** A shift at or past the operand's
+width is defined now: zero for `<<` and for an unsigned `>>`, and the sign for a signed `>>`. The
+`within`-typed left shift still traps, as `reference/errors.md` promises.
+
+**The loop stays anyway, and the reason is the floor rather than the shift.** This package declares
+`sysl = "0.0.79"`, which is older than the rule, so adopting the one-liner would raise what a
+consumer needs — for a saving of `bit_width(n)` iterations once per transform. That is a bad trade,
+so the loop is the correct code here rather than a workaround. It is still the one place in this
+package a target with a different `usize` could go wrong.
 
 ## Licence
 
