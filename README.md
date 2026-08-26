@@ -92,11 +92,23 @@ that wanted two operand types became `Mul[Rhs = Self]`, a bound that promises be
 value became receiver-free trait membership, and the complex arithmetic it once carried is now
 `sysl.math.complex`. What was left when the friction ran out was a library, which is this.
 
-One finding is **not** discharged and is recorded here because the code still shows it:
-`sysl.math.Bits` cannot say how wide `Self` is. Reversing the low `bits` bits of a word would be
-`v.reverse_bits() >> (w - bits)`, and there is no member that answers `w` — the trait counts bits and
-moves them and never states how many there are. `reverse_bits` in `fft.sysl` is a loop for that
-reason, and it is the one place in this package a target with a different `usize` could go wrong.
+One finding is **not** discharged, and probing it found something larger than the finding said.
+
+The guide recorded it as *"`sysl.math.Bits` cannot say how wide `Self` is"*, which is **false**:
+`count_ones() + count_zeros()` is the width by construction, at whatever `Self` turned out to be, and
+`sysl.math`'s own docstring says that is exactly why it keeps the second of the pair rather than
+leaving it to a subtraction.
+
+What actually stops `reverse_bits` becoming `v.reverse_bits() >> (w - bits)` is the **empty shift**.
+A one-sample transform reaches it with `bits` at zero, so the amount is the full width — and a shift
+at or past the width is **undefined behaviour** in sysl today, on every integer type. It does not
+trap and it does not answer zero; it produces garbage that is not stable across compilations, and has
+been observed to differ between two runs of one binary. The one case that behaves is a **left** shift
+on a `within`-typed operand, which traps as `reference/errors.md` promises.
+
+So the loop stays, and it is total where the shift is not. It is the one place in this package a
+target with a different `usize` could go wrong — and until the shift question is settled, the loop is
+the correct code rather than a workaround.
 
 ## Licence
 
