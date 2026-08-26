@@ -1,0 +1,370 @@
+module sh.sysl.fft
+@tests
+
+import sysl.math.{Float, is_power_of_two}
+import sysl.math.complex.Complex
+
+// What this package claims, run by `sysl test .`.
+//
+// **The strongest checks here compare the fast transform against the slow one**, bin by bin, over
+// both a real signal and a complex one. That is the claim the package is built around: `fft` is a
+// rearrangement of `dft`, and a rearrangement can be subtly wrong and still produce plausible
+// numbers, so the definition is what says the rearrangement is right.
+//
+// Nothing here is checked against a value this package produced. The transforms of an impulse, a
+// constant and a cosine are known in closed form; the four bins of `[1, 2, 3, 4]` can be done on
+// paper; the anchored spectrum came out of numpy. Where a *property* is checked rather than a number
+// -- linearity, Parseval, the shift theorem, conjugate symmetry, the convolution theorem -- the
+// property is the definition of the transform, so an implementation satisfying all of them and
+// disagreeing with numpy would be a surprise worth having.
+
+private const eps: real = 0.000000001
+
+// Six decimals, and anything that rounds to nothing renders as a plain zero: a bin the transform
+// should have cancelled lands on one side of zero or the other, and `-0.000000` is not a different
+// answer from `0.000000`.
+private approx(x: real) -> string
+    var v = x
+
+    if v < 0.0000005 && v > -0.0000005 then v = 0.0
+
+    f"$v%.6f"
+end approx
+
+private show(c: Complex[real]) -> string = approx(c.re) + " " + approx(c.im)
+
+private bin(xs: []const Complex[real], k: usize) -> string = show(xs[k])
+
+// A transform of a length the caller chose, so it cannot fail.
+private transformed(xs: []const Complex[real]) -> []Complex[real] =
+    fft_of(xs).expect("a transform of a power-of-two length")
+
+// Whether two signals agree everywhere, which is the shape most checks below have.
+private agree[F: Float](got: []const Complex[F], want: []const Complex[F], tol: F) -> bool
+    if got.len != want.len then return false
+
+    for i in 0..<got.len do if !got[i].near(want[i], tol) then return false
+
+    true
+end agree
+
+// What a transform said when it refused.
+private why[T](r: Result[T, Fault]) -> string =
+    r.expect_err("a transform that was supposed to refuse").describe()
+
+private digits() -> []Complex[real] = real_signal([3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0])
+
+// -- transforms you can do in your head ------------------------------------------------------------
+
+@test
+an_impulse_fills_every_bin()
+    var impulse = real_signal([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+    assert(fft(impulse).is_ok(), "the transform of an impulse succeeds")
+
+    for k in 0..<impulse.len
+        assert(impulse[k].near(Complex.one(), eps), "an impulse puts one in every bin")
+end an_impulse_fills_every_bin
+
+@test
+a_constant_lands_in_one_bin()
+    var level = real_signal([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+
+    assert(fft(level).is_ok(), "the transform of a constant succeeds")
+    assert_eq(bin(level, 0), "8.000000 0.000000", "its first bin is the sum of the samples")
+
+    for k in 1..<level.len
+        assert(level[k].near(Complex.zero(), eps), "and every other bin is empty")
+end a_constant_lands_in_one_bin
+
+@test
+four_samples_by_hand()
+    var four = real_signal([1.0, 2.0, 3.0, 4.0])
+
+    assert(fft(four).is_ok(), "four samples transform")
+    assert_eq(bin(four, 0), "10.000000 0.000000", "bin 0")
+    assert_eq(bin(four, 1), "-2.000000 2.000000", "bin 1")
+    assert_eq(bin(four, 2), "-2.000000 0.000000", "bin 2")
+    assert_eq(bin(four, 3), "-2.000000 -2.000000", "bin 3")
+end four_samples_by_hand
+
+@test
+one_sample_is_left_alone()
+    var single: []Complex[real] = [Complex(7.0, -2.0)]
+
+    assert(fft(single).is_ok(), "one sample transforms")
+    assert_eq(show(single[0]), "7.000000 -2.000000", "and is left alone by it")
+end one_sample_is_left_alone
+
+// -- the fast transform against the definition -----------------------------------------------------
+
+@test
+the_fast_transform_agrees_with_the_slow_one()
+    var real_in = digits()
+
+    assert(agree(transformed(real_in), dft(real_in), eps), "every bin of a real signal agrees")
+
+    var mixed: []Complex[real] =
+        [Complex(1.0, 1.0), Complex(2.0, -3.0), Complex(-1.0, 0.5), Complex(0.0, -2.0)]
+
+    assert(agree(transformed(mixed), dft(mixed), eps), "and every bin of a complex one")
+
+    var fast = transformed(mixed)
+
+    assert_eq(bin(fast, 0), "2.000000 -3.500000", "a complex signal's bin 0")
+    assert_eq(bin(fast, 1), "1.000000 -1.500000", "a complex signal's bin 1")
+    assert_eq(bin(fast, 2), "-2.000000 6.500000", "a complex signal's bin 2")
+    assert_eq(bin(fast, 3), "3.000000 2.500000", "a complex signal's bin 3")
+end the_fast_transform_agrees_with_the_slow_one
+
+@test
+bins_somebody_else_computed()
+    var fast = transformed(digits())
+
+    assert_eq(bin(fast, 0), "31.000000 0.000000", "bin 0")
+    assert_eq(bin(fast, 1), "-4.121320 7.192388", "bin 1")
+    assert_eq(bin(fast, 2), "2.000000 -3.000000", "bin 2")
+    assert_eq(bin(fast, 3), "0.121320 11.192388", "bin 3")
+    assert_eq(bin(fast, 4), "-3.000000 0.000000", "bin 4")
+    assert_eq(bin(fast, 5), "0.121320 -11.192388", "bin 5")
+    assert_eq(bin(fast, 6), "2.000000 3.000000", "bin 6")
+    assert_eq(bin(fast, 7), "-4.121320 -7.192388", "bin 7")
+
+    var mags = magnitudes(fast)
+
+    assert_eq(approx(mags[0]), "31.000000", "magnitude 0")
+    assert_eq(approx(mags[1]), "8.289495", "magnitude 1")
+    assert_eq(approx(mags[3]), "11.193046", "magnitude 3")
+    assert_eq(approx(mags[4]), "3.000000", "magnitude 4")
+end bins_somebody_else_computed
+
+@test
+a_cosine_lands_in_two_bins()
+    var wave: []Complex[real] = [Complex.zero(); 16]
+    var tau = tau_of[real]()
+
+    for t in 0..<wave.len do wave[t] = Complex(Complex.expi(tau * 3.0 * real(t) / 16.0).re, 0.0)
+
+    assert(fft(wave).is_ok(), "a cosine transforms")
+    assert_eq(bin(wave, 3), "8.000000 0.000000", "the bin it was written at")
+    assert_eq(bin(wave, 13), "8.000000 0.000000", "and the mirror of that bin")
+
+    for k in 0..<wave.len
+        if k != 3 && k != 13
+            assert(wave[k].near(Complex.zero(), 0.000001), "with nothing anywhere else")
+end a_cosine_lands_in_two_bins
+
+// -- identities the transform has to obey ----------------------------------------------------------
+
+@test
+the_transform_is_linear()
+    var p = real_signal([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+    var q = real_signal([2.0, 0.0, -1.0, 3.0, 0.5, 4.0, -2.0, 1.0])
+    var both: []Complex[real] = [Complex.zero(); 8]
+
+    for i in 0..<both.len do both[i] = p[i] + q[i]
+
+    var tp = transformed(p)
+    var tq = transformed(q)
+    var sum: []Complex[real] = [Complex.zero(); 8]
+
+    for k in 0..<sum.len do sum[k] = tp[k] + tq[k]
+
+    assert(agree(sum, transformed(both), eps),
+           "the transform of a sum is the sum of the transforms")
+end the_transform_is_linear
+
+@test
+the_transform_preserves_energy()
+    var signal = digits()
+
+    assert_eq(approx(energy(signal)), "173.000000", "the energy in a signal")
+    assert_eq(approx(energy(transformed(signal)) / 8.0), "173.000000",
+              "and the energy in its spectrum, over n")
+end the_transform_preserves_energy
+
+@test
+a_real_spectrum_is_conjugate_symmetric()
+    var fast = transformed(digits())
+
+    for k in 1..<fast.len
+        assert(fast[fast.len - k].near(fast[k].conj(), eps),
+               "a real signal's spectrum is conjugate symmetric")
+end a_real_spectrum_is_conjugate_symmetric
+
+@test
+shifting_the_samples_turns_each_bin()
+    var signal = digits()
+    var fast = transformed(signal)
+    var shifted: []Complex[real] = [Complex.zero(); 8]
+
+    for i in 0..<signal.len do shifted[(i + 3) % 8] = signal[i]
+
+    var tshifted = transformed(shifted)
+    var tau = tau_of[real]()
+
+    for k in 0..<tshifted.len
+        assert(tshifted[k].near(fast[k] * Complex.expi(-tau * real(k) * 3.0 / 8.0), eps),
+               "shifting the samples turns each bin by its own angle")
+
+    var moved = magnitudes(tshifted)
+    var still = magnitudes(fast)
+
+    for k in 0..<moved.len
+        assert_eq(approx(moved[k]), approx(still[k]), "so a shift leaves every magnitude alone")
+end shifting_the_samples_turns_each_bin
+
+// -- there and back again --------------------------------------------------------------------------
+
+@test
+a_real_signal_survives_a_round_trip()
+    var signal = digits()
+    var trip = copy_of(signal)
+
+    assert(fft(trip).is_ok(), "forward")
+    assert(ifft(trip).is_ok(), "and back")
+    assert(agree(trip, signal, eps), "every sample survives the round trip")
+    assert_eq(approx(trip[5].re), "9.000000", "sample 5, exactly")
+    assert_eq(approx(trip[5].im), "0.000000", "and its imaginary part is gone")
+end a_real_signal_survives_a_round_trip
+
+@test
+a_complex_signal_survives_a_round_trip()
+    var mixed: []Complex[real] =
+        [Complex(1.0, 1.0), Complex(2.0, -3.0), Complex(-1.0, 0.5), Complex(0.0, -2.0)]
+    var trip = copy_of(mixed)
+
+    assert(fft(trip).is_ok(), "a complex signal goes forward")
+    assert(ifft(trip).is_ok(), "and comes back")
+    assert(agree(trip, mixed, eps), "with every sample intact")
+end a_complex_signal_survives_a_round_trip
+
+// -- convolution, two ways -------------------------------------------------------------------------
+
+@test
+convolution_two_ways()
+    var ca = real_signal([1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    var cb = real_signal([0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 4.0])
+
+    var through = convolve(ca, cb).expect("two signals of the same power-of-two length")
+    var direct = convolve_directly(ca, cb).expect("two signals of the same length")
+
+    assert_eq(approx(through[0].re), "8.000000", "index 0 wraps around")
+    assert_eq(approx(through[2].re), "3.000000", "index 2")
+    assert_eq(approx(through[3].re), "6.000000", "index 3")
+    assert_eq(approx(through[7].re), "4.000000", "index 7")
+
+    assert(agree(through, direct, 0.000001), "the theorem and the definition agree")
+end convolution_two_ways
+
+@test
+convolving_with_an_impulse_changes_nothing()
+    var signal = digits()
+    var delta = real_signal([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    var out = convolve(signal, delta).expect("two signals of the same power-of-two length")
+
+    assert(agree(out, signal, 0.000001), "convolving with an impulse gives the signal back")
+end convolving_with_an_impulse_changes_nothing
+
+// -- the strongest bins ----------------------------------------------------------------------------
+
+@test
+the_strongest_bins_of_a_complex_spectrum()
+    var mixed: []Complex[real] =
+        [Complex(1.0, 1.0), Complex(2.0, -3.0), Complex(-1.0, 0.5), Complex(0.0, -2.0)]
+    var ranked = peaks(transformed(mixed))
+
+    assert_eq(ranked[0].k, 2, "the strongest bin of a complex spectrum")
+    assert_eq(approx(ranked[0].mag), "6.800735", "its magnitude")
+    assert_eq(ranked[1].k, 0, "the next")
+    assert_eq(ranked[2].k, 3, "the one after that")
+    assert_eq(ranked[3].k, 1, "and the weakest")
+
+    for i in 1..<ranked.len
+        assert(!(ranked[i - 1] < ranked[i]), "nothing is out of order")
+end the_strongest_bins_of_a_complex_spectrum
+
+@test
+a_mirrored_pair_keeps_its_frequency_order()
+    var ranked = peaks(transformed(digits()))
+
+    assert_eq(ranked[0].k, 0, "the strongest bin of a real spectrum")
+    assert_eq(approx(ranked[1].mag), "11.193046", "a mirrored pair follows it")
+    assert_eq(approx(ranked[2].mag), "11.193046", "both of them")
+    assert(ranked[1] == ranked[2],
+           "which is the two bins comparing equal, not two roundings agreeing")
+    assert(ranked[1].k < ranked[2].k, "and the stable sort left them in frequency order")
+    assert_eq(ranked[7].k, 4, "the weakest bin is the one with no mirror")
+end a_mirrored_pair_keeps_its_frequency_order
+
+// -- what the transform refuses --------------------------------------------------------------------
+
+@test
+a_transform_refuses_what_it_cannot_do()
+    var nothing: []Complex[real] = []
+
+    assert(fft(nothing).is_err(), "no samples at all")
+    assert_eq(why(fft(nothing)), "a transform needs at least one sample", "and it says so")
+
+    var five = real_signal([1.0, 2.0, 3.0, 4.0, 5.0])
+
+    assert(fft(five).is_err(), "a length that is not a power of two")
+    assert_eq(why(fft(five)), "this transform is radix 2, so the length must be a power of two",
+              "and it says so")
+    assert(ifft(five).is_err(), "the inverse refuses the same lengths")
+
+    assert(is_power_of_two(2), "two is a power of two")
+    assert(!is_power_of_two(6), "six is not")
+    assert(!is_power_of_two(0), "nor is nothing")
+end a_transform_refuses_what_it_cannot_do
+
+@test
+a_convolution_refuses_what_it_cannot_do()
+    var ca = real_signal([1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    var four = real_signal([1.0, 2.0, 3.0, 4.0])
+    var five = real_signal([1.0, 2.0, 3.0, 4.0, 5.0])
+
+    assert(convolve(ca, four).is_err(), "convolving lengths that differ")
+    assert_eq(why(convolve(ca, four)), "the two signals must have the same length", "and it says so")
+    assert(convolve_directly(ca, four).is_err(), "the direct sum refuses them too")
+    assert(convolve(five, five).is_err(), "and a length neither of them can transform")
+end a_convolution_refuses_what_it_cannot_do
+
+// -- one body, both float widths -------------------------------------------------------------------
+
+// Everything above runs at `real`. This runs the same three claims at `real` *and* at `f32`, which is
+// the claim the generic bound exists to make: a transform that had quietly specialised to one width
+// would pass every test before this one.
+//
+// The tolerance is the only thing that differs, and it has to: `f32` carries about seven significant
+// digits, so a round trip through sixteen butterflies lands several orders of magnitude further from
+// where it started than the same trip at `real` does. A test that used one tolerance for both would
+// either be vacuous at `real` or false at `f32`.
+private the_three_claims[F: Float](samples: []const F, tol: F)
+    var signal = real_signal(samples)
+
+    assert(agree(fft_of(signal).expect("a power-of-two length"), dft(signal), tol),
+           "the fast transform agrees with the definition")
+
+    var trip = copy_of(signal)
+
+    fft(trip).expect("a power-of-two length")
+    ifft(trip).expect("a power-of-two length")
+
+    assert(agree(trip, signal, tol), "and a round trip returns the samples")
+
+    var spectrum = fft_of(signal).expect("a power-of-two length")
+
+    for k in 1..<spectrum.len
+        assert(spectrum[spectrum.len - k].near(spectrum[k].conj(), tol),
+               "and a real signal's spectrum is conjugate symmetric")
+end the_three_claims
+
+@test
+one_body_at_both_float_widths()
+    var wide: [8]real = [3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0]
+    var narrow: [8]f32 = [3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0]
+
+    the_three_claims(wide, 0.000000001)
+    the_three_claims(narrow, 0.0001)
+end one_body_at_both_float_widths

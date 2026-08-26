@@ -1,0 +1,41 @@
+// The fast Fourier transform for sysl, generic over the float width.
+//
+// Cooley-Tukey radix 2, in place, beside the O(n^2) sum that is the transform's definition -- and
+// the second is shipped rather than kept in the tests, because a rearrangement is exactly the kind
+// of thing that can be subtly wrong and still produce plausible numbers.
+//
+// This is the block a consumer writes to reach it:
+//
+//     dependencies {
+//       fft { git = "github.com/sysl-lang/fft", version = "0.1.0" }
+//     }
+//
+// The coordinate names the package, `fft`; the module a program imports is `sh.sysl.fft`. It
+// declares no dependencies of its own -- everything it needs is the standard library's `sysl.math`,
+// `sysl.math.complex` and `sysl.slices`.
+
+package {
+  name    = "fft"
+  version = "0.1.0"
+
+  // Nothing here reaches past what 0.0.79 shipped. The generic body needs three things and all three
+  // are older than that: `Complex[F]` over a `Float` bound, `F(n)` casting an index to the type
+  // parameter, and `sysl.slices.sort_stable_by` for the peak ordering.
+  sysl = "0.0.79"
+}
+
+// **`heap = true`, and it is worth knowing which half asks for it.** `fft` and `ifft` transform the
+// samples where they lie and allocate nothing at all -- that is deliberate, and it is what a program
+// on a board would use. Everything that builds a *new* signal needs storage whose size is only known
+// when it is called: `dft`, `real_signal`, `copy_of`, `fft_of`, `ifft_of`, `magnitudes`, both
+// convolutions, and `peaks`.
+//
+// A capability clause is a property of the package rather than of a function, so declaring it here
+// is the honest answer even though the core transform would satisfy `no alloc` on its own. A caller
+// that wants only the in-place pair still pays this declaration; splitting the package to avoid that
+// would be splitting it along a line no caller reads it along.
+//
+// **What is NOT here is `os` or `posix`.** Nothing in this package opens, reads or writes anything.
+requires {
+  heap = true
+}

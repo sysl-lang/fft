@@ -1,0 +1,82 @@
+module sh.sysl.fft
+
+import sysl.math.Float
+import sysl.math.complex.Complex
+
+/** Making signals, copying them, and the two quantities a caller reads off one.
+ *
+ * **Everything in this file allocates**, which is the line the package is organised along: `fft` and
+ * `ifft` work where the samples already are, and each of these builds a slice whose length is only
+ * known when it is called.
+ */
+
+/** A signal from real samples, with every imaginary part zero — which is what a measurement is
+ * before anything has been done to it.
+ */
+real_signal[F: Float](values: []const F) -> []Complex[F]
+    var out: []Complex[F] = [Complex.zero(); values.len]
+
+    for i in 0..<values.len do out[i] = Complex(values[i], F.zero())
+
+    out
+end real_signal
+
+/** A copy, since every transform here works in place and a caller usually wants to keep what it
+ * started with.
+ */
+copy_of[F: Float](xs: []const Complex[F]) -> []Complex[F]
+    var out: []Complex[F] = [Complex.zero(); xs.len]
+
+    for i in 0..<xs.len do out[i] = xs[i]
+
+    out
+end copy_of
+
+/** The forward transform of a copy, leaving the caller's samples alone.
+ *
+ * This is the shape most callers actually want, and writing it out at every call site is what the
+ * in-place pair costs. It is here rather than in `fft.sysl` because it allocates and they do not.
+ */
+fft_of[F: Float](xs: []const Complex[F]) -> Result[[]Complex[F], Fault]
+    var out = copy_of(xs)
+
+    fft(out)?
+
+    Ok(out)
+end fft_of
+
+/** The inverse transform of a copy. */
+ifft_of[F: Float](xs: []const Complex[F]) -> Result[[]Complex[F], Fault]
+    var out = copy_of(xs)
+
+    ifft(out)?
+
+    Ok(out)
+end ifft_of
+
+/** The magnitude of every bin: how much of the signal is at that frequency, with the phase
+ * discarded.
+ */
+magnitudes[F: Float](xs: []const Complex[F]) -> []F
+    var out: []F = [F.zero(); xs.len]
+
+    for i in 0..<xs.len do out[i] = xs[i].abs()
+
+    out
+end magnitudes
+
+/** The energy in a signal, which Parseval's theorem says the transform preserves up to the factor n.
+ *
+ * Summing the squared magnitudes avoids the square roots entirely, which is what `norm_sqr` is for —
+ * and it is never called `norm`, because C++ and Rust give that word opposite meanings.
+ *
+ * **This one allocates nothing**, and sits here because it is read alongside the rest rather than
+ * because it needs a heap.
+ */
+energy[F: Float](xs: []const Complex[F]) -> F
+    var total = F.zero()
+
+    for i in 0..<xs.len do total += xs[i].norm_sqr()
+
+    total
+end energy

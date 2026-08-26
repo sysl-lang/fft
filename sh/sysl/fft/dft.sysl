@@ -1,0 +1,31 @@
+module sh.sysl.fft
+
+import sysl.math.Float
+import sysl.math.complex.Complex
+
+/** The discrete Fourier transform summed term by term: the definition, quadratic and slow.
+ *
+ * **Having both is the point of shipping it.** The fast transform is a *rearrangement* of this sum,
+ * and a rearrangement is exactly the kind of thing that can be subtly wrong and still produce
+ * plausible numbers — so the definition is kept as the thing to compare against. `tests.sysl` runs
+ * both over the same signals and asserts every bin agrees, which is a check that would catch a
+ * mis-ordered butterfly where a spot check against four published values would not.
+ *
+ * It is worth having outside the tests too: a caller with a length that is not a power of two has no
+ * fast transform available, and at a few dozen samples the quadratic sum is the right answer rather
+ * than a fallback to apologise for.
+ */
+dft[F: Float](xs: []const Complex[F]) -> []Complex[F]
+    var n = xs.len
+    var out: []Complex[F] = [Complex.zero(); n]
+    var tau = tau_of[F]()
+
+    for k in 0..<n
+        var acc: Complex[F] = Complex.zero()
+
+        for t in 0..<n do acc = acc + xs[t] * Complex.expi(-tau * F(k) * F(t) / F(n))
+
+        out[k] = acc
+
+    out
+end dft

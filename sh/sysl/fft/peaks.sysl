@@ -1,0 +1,50 @@
+module sh.sysl.fft
+
+import sysl.math.Float
+import sysl.math.complex.Complex
+import sysl.slices.sort_stable_by
+
+/** Which frequencies a signal actually has energy at, strongest first. */
+
+/** One bin of a spectrum, ordered by how much energy is in it.
+ *
+ * **Written out rather than derived, and the reason is worth saying.** `@derive(Ord)` walks every
+ * field in declaration order, which here would compare `k` first and order the spectrum by
+ * frequency — the opposite of what this wants. A derived block is right when the order the fields
+ * happen to be in *is* the order the type means; where a type orders by one of its fields, saying so
+ * is the whole declaration.
+ *
+ * `Ord` is one method and the other three comparisons come from it. `Eq` is separate and is here
+ * because ordering requires equality — and because the bins of a real spectrum genuinely do come in
+ * equal pairs, so it is a comparison callers make rather than a formality.
+ */
+struct Bin[F: Float]
+    k: usize
+    mag: F
+
+impl[F: Float] Ord for Bin[F]
+    lt(self, rhs: Bin[F]) -> bool = self.mag < rhs.mag
+
+impl[F: Float] Eq for Bin[F]
+    eq(self, rhs: Bin[F]) -> bool = self.mag == rhs.mag
+
+/** Every bin, strongest first, and **stable** — bins of equal energy keep their frequency order.
+ *
+ * The stability is what makes the answer reproducible for a real signal, where every bin has a
+ * mirror of exactly the same magnitude and an unstable sort would return them either way round.
+ * `sort_stable_by` merges through scratch the caller supplies rather than allocating, so the storage
+ * is visible here, which is the honest cost of a stable sort.
+ *
+ * Descending by passing the comparison the other way round. Equal bins satisfy neither ordering, so
+ * they keep the order they arrived in, which is the whole point.
+ */
+peaks[F: Float](xs: []const Complex[F]) -> []Bin[F]
+    var bins: []Bin[F] = [Bin(0, F.zero()); xs.len]
+    var scratch: []Bin[F] = [Bin(0, F.zero()); xs.len]
+
+    for i in 0..<xs.len do bins[i] = Bin(i, xs[i].abs())
+
+    sort_stable_by(bins, scratch, (a, b) -> b < a)
+
+    bins
+end peaks

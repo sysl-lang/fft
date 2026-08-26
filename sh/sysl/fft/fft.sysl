@@ -1,0 +1,124 @@
+module sh.sysl.fft
+
+import sysl.math.{Bits, Float, is_power_of_two}
+import sysl.math.complex.Complex
+
+/** The fast Fourier transform: Cooley-Tukey, radix 2, in place, iterative.
+ *
+ * **Generic over the float width rather than fixed at one.** Everything here is written against
+ * `F: Float`, so the same body transforms a `[]Complex[real]` and a `[]Complex[f32]` — which matters
+ * more here than it looks, because a signal that arrives from an audio device or an ADC is usually
+ * `f32` already and converting it to `real` to transform it doubles the storage for no accuracy the
+ * input had.
+ *
+ * The angles a butterfly needs come from the loop counters, and a body generic over the width has to
+ * make an `F` out of one. `F(k)` is that cast — a conversion to a type *parameter*, which the
+ * compiler resolves once `F` is known. `sysl.math.Float` has no `from_int` member and needs none.
+ */
+
+/** Why a transform refused. Each one is a property of the *lengths* involved, so a caller that
+ * controls its own buffer sizes can rule all three out before calling.
+ */
+enum Fault
+    Empty
+    NotPowerOfTwo
+    LengthsDiffer
+
+    describe(self) -> string = self match
+        Empty -> "a transform needs at least one sample"
+        NotPowerOfTwo -> "this transform is radix 2, so the length must be a power of two"
+        LengthsDiffer -> "the two signals must have the same length"
+end Fault
+
+/** Two pi, at whatever width the caller is transforming in. `sysl.math.tau` is a `real` and this is
+ * what a body generic over the width asks for instead — the same relationship `F.pi()` has to
+ * `sysl.math.pi`.
+ */
+private[fft] tau_of[F: Float]() -> F = F.pi() + F.pi()
+
+// How many times the length halves, which for a power of two is the position of its one bit — and
+// `transform` has already refused anything else by the time this is asked.
+private bit_width(n: usize) -> usize = usize(n.trailing_zeros())
+
+// The low `bits` bits, in the opposite order, which is where the bit-reversal permutation sends each
+// index.
+//
+// This stays a loop rather than becoming `v.reverse_bits() >> (w - bits)`, and the reason is the
+// **empty shift**: a one-sample transform reaches here with `bits` at zero, since `bit_width(1)` is
+// `trailing_zeros(1)`, which is zero. That shift is by the full width, which is undefined. The loop
+// is total where the shift needs a guard in front of it, and at these sizes the guard is the only
+// thing the shift would have bought.
+private reverse_bits(v: usize, bits: usize) -> usize
+    var r: usize = 0
+    var x = v
+
+    for i in 0..<bits
+        r = r << 1 | x & 1
+        x >>= 1
+
+    r
+end reverse_bits
+
+// `sign` is what separates the two directions: -1 for the forward transform's `e^(-2*pi*i*k/n)` and
+// +1 for the inverse's conjugate kernel, which is the whole of the difference between them apart
+// from the final scaling.
+private transform[F: Float](xs: []Complex[F], sign: F) -> Result[unit, Fault]
+    if xs.len == 0 then return Err(Empty)
+    if !is_power_of_two(xs.len) then return Err(NotPowerOfTwo)
+
+    var n = xs.len
+    var bits = bit_width(n)
+
+    // Sorting the samples into bit-reversed order first is what lets the butterflies run over
+    // contiguous halves afterwards. Swapping only when `j > i` visits each pair once.
+    for i in 0..<n
+        var j = reverse_bits(i, bits)
+
+        if j > i
+            var t = xs[i]
+
+            xs[i] = xs[j]
+            xs[j] = t
+
+    var span: usize = 2
+
+    while span <= n
+        var half = span / 2
+        var step = sign * tau_of[F]() / F(span)
+        var start: usize = 0
+
+        while start < n
+            for k in 0..<half
+                var w = Complex.expi(step * F(k))
+                var a = xs[start + k]
+                var b = xs[start + k + half] * w
+
+                xs[start + k] = a + b
+                xs[start + k + half] = a - b
+
+            start += span
+
+        span <<= 1
+
+    Ok(())
+end transform
+
+/** The forward transform, in place. Allocates nothing: the samples are permuted and combined where
+ * they lie, which is what makes this the half of the package a program with no heap can use.
+ */
+fft[F: Float](xs: []Complex[F]) -> Result[unit, Fault] = transform(xs, -F.one())
+
+/** The inverse, in place. It is the forward transform with the kernel conjugated and everything
+ * divided by n. That division is a `Complex` scaled by a real, which is `Mul[F]` rather than `Mul` —
+ * one trait at the argument list that names the operand it takes, and the reason
+ * `sysl.math.complex` writes each of the four arithmetic operators twice.
+ */
+ifft[F: Float](xs: []Complex[F]) -> Result[unit, Fault]
+    transform(xs, F.one())?
+
+    var k = F.one() / F(xs.len)
+
+    for i in 0..<xs.len do xs[i] *= k
+
+    Ok(())
+end ifft

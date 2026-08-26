@@ -1,0 +1,50 @@
+module sh.sysl.fft
+
+import sysl.math.Float
+import sysl.math.complex.Complex
+
+/** Circular convolution, through the transform and by its definition.
+ *
+ * The two are here together for the same reason `dft.sysl` is: the fast route is the convolution
+ * *theorem* — multiply the spectra pointwise and come back — and the direct sum is what the theorem
+ * is a claim about. A caller doing this for real should reach for `convolve`; `convolve_directly` is
+ * what says it is right.
+ */
+
+/** Multiply the spectra and come back. Three transforms and a pointwise product, so O(n log n) where
+ * the sum below is O(n²).
+ */
+convolve[F: Float](a: []const Complex[F], b: []const Complex[F]) -> Result[[]Complex[F], Fault]
+    if a.len != b.len then return Err(LengthsDiffer)
+
+    var fa = copy_of(a)
+    var fb = copy_of(b)
+
+    fft(fa)?
+    fft(fb)?
+
+    for i in 0..<fa.len do fa[i] = fa[i] * fb[i]
+
+    ifft(fa)?
+
+    Ok(fa)
+end convolve
+
+/** The same answer, summed term by term. It takes any length at all, where `convolve` inherits the
+ * power-of-two restriction from the transform underneath it.
+ */
+convolve_directly[F: Float](a: []const Complex[F], b: []const Complex[F]) -> Result[[]Complex[F], Fault]
+    if a.len != b.len then return Err(LengthsDiffer)
+
+    var n = a.len
+    var out: []Complex[F] = [Complex.zero(); n]
+
+    for i in 0..<n
+        var acc: Complex[F] = Complex.zero()
+
+        for j in 0..<n do acc = acc + a[j] * b[(i + n - j) % n]
+
+        out[i] = acc
+
+    Ok(out)
+end convolve_directly
