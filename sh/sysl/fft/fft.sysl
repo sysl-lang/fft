@@ -49,9 +49,9 @@ private bit_width(n: usize) -> usize = usize(n.trailing_zeros())
 // width. It used to be undefined; it is defined now and answers zero, so the one-liner would be
 // total with no guard in front of it.
 //
-// What keeps the loop is that `package.hocon` declares `sysl = "0.0.79"`, which is older than the
-// rule. Adopting the shift would raise the floor for a saving of `bit_width(n)` iterations once per
-// transform — a bad trade, so the loop is the correct code here rather than a workaround.
+// The loop stays because the saving is `bit_width(n)` iterations once per transform, which is not
+// worth rewriting a function that is tested and correct, so the loop is the correct code here rather
+// than a workaround.
 private reverse_bits(v: usize, bits: usize) -> usize
     var r: usize = 0
     var x = v

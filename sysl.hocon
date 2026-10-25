@@ -18,10 +18,10 @@ package {
   name    = "fft"
   version = "0.1.0"
 
-  // Nothing here reaches past what 0.0.79 shipped. The generic body needs three things and all three
-  // are older than that: `Complex[F]` over a `Float` bound, `F(n)` casting an index to the type
-  // parameter, and `sysl.slices.sort_stable_by` for the peak ordering.
-  sysl = "0.0.79"
+  // The generic body needs three things: `Complex[F]` over a `Float` bound, `F(n)` casting an index
+  // to the type parameter, and `sysl.slices.sort_stable_by` for the peak ordering. 0.6.0 is the
+  // release this package is swept and gated against.
+  sysl = "0.6.0"
 }
 
 // **`heap = true`, and it is worth knowing which half asks for it.** `fft` and `ifft` transform the

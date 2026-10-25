@@ -16,7 +16,7 @@ sh/sysl/fft/
     convolve.sysl   circular convolution, through the transform and by its definition
     peaks.sysl      which frequencies a signal actually has energy at, strongest first
     tests.sysl      what all of it claims, run by `sysl test .`
-package.hocon       who this package is, and what it needs of the machine
+sysl.hocon          who this package is, and what it needs of the machine
 ```
 
 The module is **`sh.sysl.fft`**. It depends on nothing outside the standard library —
@@ -24,7 +24,7 @@ The module is **`sh.sysl.fft`**. It depends on nothing outside the standard libr
 
 ## Using it
 
-Name it in your project's `package.hocon` and `sysl build` fetches it:
+Name it in your project's `sysl.hocon` and `sysl build` fetches it:
 
 ```
 dependencies {
